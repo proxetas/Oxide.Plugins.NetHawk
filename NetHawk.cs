@@ -4,6 +4,7 @@ using Oxide.Core.Libraries.Covalence;
 using System.Net;
 using System.Text;
 using System.Collections.Generic;
+using Newtonsoft.Json;
 
 namespace Oxide.Plugins
 {
@@ -11,72 +12,85 @@ namespace Oxide.Plugins
     [Description("Integrates with NetHawk WAF & DDOS Rust extension, provides insights into Rust player activities to provide additional DDOS protections")]
     public class NetHawk : RustPlugin
     {
+
+        private class Settings
+        {
+            [JsonProperty(PropertyName="host")]
+            public string Host { get; set; }
+            [JsonProperty(PropertyName="username")]
+            public string Username { get; set; }
+            [JsonProperty(PropertyName="password")]
+            public string Password { get; set; }
+            [JsonProperty(PropertyName ="ip_whitelist")]
+            public List<string> Whitelist { get; set; }
+            [JsonProperty(PropertyName = "client_command_filters")]
+            public List<string> ClientCommandFilters { get; set; }
+
+        }
         private string? serverName;
         private string? url;
         private Dictionary<string, string>? headers;
+        private Settings settings;
 
         private void Init()
         {
             serverName = ConVar.Server.hostname;
-            LoadDefaultConfig();
-            Puts("NetHawk extension loaded.");
-        }
+            LoadConfig();
+            Puts("Nethawk Configuration Loaded:");
+            Puts($"config.host = {settings.Host}");
+            Puts($"config.username = {settings.Username}");
 
-        [ConsoleCommand("nethawk")]
-        void Configure(IPlayer player, string command, string[] args)
-        {
-            if (player == null || !player.IsAdmin)
+            Puts($"config.ClientCommandFilters: ");
+            foreach (var filter in settings.ClientCommandFilters)
             {
-                return;
+                Puts($"filter client command {filter}");
             }
 
-            if (command != "config")
+            Puts($"config.Whitelist: ");
+            foreach (var ip in settings.Whitelist)
             {
-                player.Message($"invalid command '{command}'");
-                return;
+                Puts($"ip whitelist {ip}");
             }
 
-            if (args.Length == 0)
-            {
-                player.Message("invalid command format. please provide host (and optionally http auth username password");
-                return;
-            }
 
-            Config["host"] = args[0];
-
-            if (args.Length > 1)
-            {
-                Config["username"] = args[1];
-            }
-
-            if (args.Length > 2)
-            {
-                Config["password"] = args[2];
-            }
-
-            Config.Save();
-            LoadDefaultConfig();
-            player.Message("NetHawk config updated");
-        }
-
-        protected override void LoadDefaultConfig()
-        {
-            string username;
-            string password;
-            string host;
-            Config["host"] = host = Config["host"] as string ?? "127.0.0.1:5555";
-            Config["username"] = username = Config["username"] as string ?? "";
-            Config["password"] = password = Config["password"] as string ?? "";
-            Config.Save();
-            url = $"http://{host}/api/extensions/rust";
-            if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
+            url = $"http://{settings.Host}/api/extensions/rust";
+            if (string.IsNullOrEmpty(settings.Username) || string.IsNullOrEmpty(settings.Password))
             {
                 return;
             }
 
             headers = new Dictionary<string, string>();
-            string token = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{username}:{password}"));
+            string token = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{settings.Username}:{settings.Password}"));
             headers["Authorization"] = $"Basic {token}";
+
+            Puts("NetHawk extension loaded..");
+        }
+
+        protected override void LoadConfig()
+        {
+            base.LoadConfig();
+            try
+            {
+                settings = Config.ReadObject<Settings>();
+            }
+            catch (Exception ex)
+            {
+                Puts("Failed to load config, using default");
+                LoadDefaultConfig();
+            }
+        }
+
+        protected override void LoadDefaultConfig()
+        {
+            settings = new Settings {
+                Host = "127.0.0.1:5555",
+                Username = "",
+                Password = "",
+                Whitelist = new List<string>(),
+                ClientCommandFilters = new List<string>(),
+            };
+
+            Config.Save();
         }
 
         void sendToNetHawk(string ev, string ip)
@@ -86,6 +100,10 @@ namespace Oxide.Plugins
 
         void sendToNetHawk(string ev, string ip, string? message)
         {
+            if (settings.Whitelist.Contains(ip))
+            {
+                return;
+            }
             string payload = "";
 
             if (message == null)
@@ -98,8 +116,11 @@ namespace Oxide.Plugins
             }
             webrequest.Enqueue(url, payload, (code, response) =>
             {
-                Puts($"[NetHawk] webrequest.Enqueue callback. code={code}, response={response}");
-            }, this, RequestMethod.POST, headers);
+                if (code != 200)
+                {
+                    Puts($"[NetHawk] webrequest.Enqueue callback. host={Config["host"]} code={code}, response={response}");
+                }
+            }, this, RequestMethod.POST, headers, 5);
         }
 
         void OnRconCommand(IPAddress ip, string command, string[] args)
@@ -125,8 +146,14 @@ namespace Oxide.Plugins
 
         object OnClientCommand(Network.Connection connection, string command)
         {
-            string ip = connection.IPAddressWithoutPort();
-            Puts($"[NETHAWK] > {ip} > {command}");
+            foreach (var filter in settings.ClientCommandFilters)
+            {
+                if (command.StartsWith(filter))
+                {
+                    return null;
+                }
+            }
+            sendToNetHawk("OnClientCommand", connection.IPAddressWithoutPort(), command);
             return null;
         }
     }

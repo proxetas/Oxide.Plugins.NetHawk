@@ -27,14 +27,13 @@ namespace Oxide.Plugins
             public List<string> ClientCommandFilters { get; set; }
 
         }
-        private string? serverName;
+
         private string? url;
         private Dictionary<string, string>? headers;
         private Settings settings;
 
         private void Init()
         {
-            serverName = ConVar.Server.hostname;
             LoadConfig();
             Puts("Nethawk Configuration Loaded:");
             Puts($"config.host = {settings.Host}");
@@ -87,7 +86,7 @@ namespace Oxide.Plugins
                 Username = "",
                 Password = "",
                 Whitelist = new List<string>(),
-                ClientCommandFilters = new List<string>(),
+                ClientCommandFilters = new List<string>() {"craft.", "kill", "inventory.endloot", "lighttoggle", "respawn", "chat.", "sendinvite", "acceptinvite", "swapseats", "combatlog", "trycreateteam", "setinfo \"client.selectedshippingcontainerblockcolour\"", "steps", "physics.steps"},
             };
 
             Config.Save();
@@ -108,11 +107,11 @@ namespace Oxide.Plugins
 
             if (message == null)
             {
-                payload = $"{ev}\n{serverName}\n{ip}";
+                payload = $"{ev}\n{ConVar.Server.hostname}\n{ip}";
             }
             else
             {
-                payload = $"{ev}\n{serverName}\n{ip}\n{message}";
+                payload = $"{ev}\n{ConVar.Server.hostname}\n{ip}\n{message}";
             }
             webrequest.Enqueue(url, payload, (code, response) =>
             {
